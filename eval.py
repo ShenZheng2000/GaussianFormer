@@ -14,6 +14,10 @@ from mmseg.models import build_segmentor
 import warnings
 warnings.filterwarnings("ignore")
 
+# >>>>>>>>>> SPATIAL MIOU (comment out to disable) <<<<<<<<<<
+from misc.spatial_miou import SpatialMIoUTracker
+# >>>>>>>>>> SPATIAL MIOU — END <<<<<<<<<<
+
 
 def pass_print(*args, **kwargs):
     pass
@@ -132,6 +136,10 @@ def main(local_rank, args):
          True, 17, filter_minmax=False)
     miou_metric.reset()
 
+    # >>>>>>>>>> SPATIAL MIOU — INIT (comment out to disable) <<<<<<<<<<
+    spatial_tracker = SpatialMIoUTracker()
+    # >>>>>>>>>> SPATIAL MIOU — END INIT <<<<<<<<<<
+
     my_model.eval()
     os.environ['eval'] = 'true'
 
@@ -162,6 +170,9 @@ def main(local_rank, args):
                     #         True, 0)
                     miou_metric._after_step(pred_occ, gt_occ, occ_mask)
                     # breakpoint()
+                    # >>>>>>>>>> SPATIAL MIOU — PER-SAMPLE (comment out to disable) <<<<<<<<<<
+                    spatial_tracker.update(pred_occ, gt_occ, result_dict['sampled_xyz'][idx], occ_mask)
+                    # >>>>>>>>>> SPATIAL MIOU — END PER-SAMPLE <<<<<<<<<<
             
             if i_iter_val % print_freq == 0 and local_rank == 0:
                 logger.info('[EVAL] Iter %5d'%(i_iter_val))
@@ -169,6 +180,10 @@ def main(local_rank, args):
     miou, iou2 = miou_metric._after_epoch()
     logger.info(f'mIoU: {miou}, iou2: {iou2}')
     miou_metric.reset()
+
+    # >>>>>>>>>> SPATIAL MIOU — REPORTING (comment out to disable) <<<<<<<<<<
+    spatial_tracker.report(logger)
+    # >>>>>>>>>> SPATIAL MIOU — END REPORTING <<<<<<<<<<
     
     if writer is not None:
         writer.close()
