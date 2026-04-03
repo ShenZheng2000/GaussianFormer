@@ -1,9 +1,9 @@
 """
-Spatial mIoU Tracker: evaluates near/far mIoU at multiple thresholds
+Spatial mIoU Tracker: evaluates near/mid/far mIoU at multiple thresholds
 in a single eval pass. Drop-in utility for eval.py.
 
 Usage in eval.py:
-    tracker = SpatialMIoUTracker(near_thresholds, far_thresholds)
+    tracker = SpatialMIoUTracker()
     # in loop:
     tracker.update(pred_occ, gt_occ, sampled_xyz, occ_mask)
     # after loop:
@@ -26,34 +26,31 @@ LABEL_STR = [
 EMPTY_LABEL = 17
 
 # Default thresholds (meters from ego) — edit these to change the sweep
-NEAR_THRESHOLDS = [10, 15, 20]   # mIoU computed for voxels within this distance
-FAR_THRESHOLDS = [30, 35, 40]    # mIoU computed for voxels beyond this distance
+NEAR_THRESHOLDS = [10, 15, 20]       # mIoU for voxels within this distance
+FAR_THRESHOLDS = [30, 35, 40]        # mIoU for voxels beyond this distance
+MID_RANGES = [(10, 30), (15, 35), (20, 40)]  # mIoU for voxels in (lo, hi)
 
 
 class SpatialMIoUTracker:
-    """Tracks near/far mIoU across multiple thresholds and distance bins."""
+    """Tracks near/mid/far mIoU across multiple thresholds and distance bins."""
 
     def __init__(self, near_thresholds=None, far_thresholds=None,
-                 bin_size=5, max_range=50):
-        self.near_thresholds = near_thresholds or NEAR_THRESHOLDS
-        self.far_thresholds = far_thresholds or FAR_THRESHOLDS
+                 mid_ranges=None, bin_size=5, max_range=50):
+        self.near_thresholds = NEAR_THRESHOLDS if near_thresholds is None else near_thresholds
+        self.far_thresholds = FAR_THRESHOLDS if far_thresholds is None else far_thresholds
+        self.mid_ranges = MID_RANGES if mid_ranges is None else mid_ranges
 
-        # Create MeanIoU for each (threshold x near/far x radius/box)
+        # Create MeanIoU for each (threshold x zone x mode)
         self.metrics = {}
-        for t in near_thresholds:
-            for mode in ['radius', 'box']:
-                key = f'near_{mode}_{t}'
-                self.metrics[key] = MeanIoU(
-                    list(range(1, 17)), EMPTY_LABEL, LABEL_STR, True,
-                    EMPTY_LABEL, filter_minmax=False, name=key)
-                self.metrics[key].reset()
-        for t in far_thresholds:
-            for mode in ['radius', 'box']:
-                key = f'far_{mode}_{t}'
-                self.metrics[key] = MeanIoU(
-                    list(range(1, 17)), EMPTY_LABEL, LABEL_STR, True,
-                    EMPTY_LABEL, filter_minmax=False, name=key)
-                self.metrics[key].reset()
+        for t in self.near_thresholds:
+            self._add_metric(f'near_radius_{t}')
+            self._add_metric(f'near_box_{t}')
+        for t in self.far_thresholds:
+            self._add_metric(f'far_radius_{t}')
+            self._add_metric(f'far_box_{t}')
+        for lo, hi in self.mid_ranges:
+            self._add_metric(f'mid_radius_{lo}_{hi}')
+            self._add_metric(f'mid_box_{lo}_{hi}')
 
         # Distance bin accumulators
         self.dist_bins = np.arange(0, max_range + bin_size, bin_size)
@@ -62,6 +59,12 @@ class SpatialMIoUTracker:
         self.radial_total = np.zeros(num_bins, dtype=np.int64)
         self.box_nonempty = np.zeros(num_bins, dtype=np.int64)
         self.box_total = np.zeros(num_bins, dtype=np.int64)
+
+    def _add_metric(self, key):
+        self.metrics[key] = MeanIoU(
+            list(range(1, 17)), EMPTY_LABEL, LABEL_STR, True,
+            EMPTY_LABEL, filter_minmax=False, name=key)
+        self.metrics[key].reset()
 
     def update(self, pred_occ, gt_occ, sampled_xyz, occ_mask):
         """Call once per sample with flattened pred/gt/mask and (N, 3) xyz."""
@@ -86,6 +89,15 @@ class SpatialMIoUTracker:
                 pred_occ[fr_mask], gt_occ[fr_mask])
             self.metrics[f'far_box_{t}']._after_step(
                 pred_occ[fb_mask], gt_occ[fb_mask])
+
+        # Mid ranges
+        for lo, hi in self.mid_ranges:
+            mr_mask = (radial_dist > lo) & (radial_dist < hi) & occ_mask
+            mb_mask = (box_dist > lo) & (box_dist < hi) & occ_mask
+            self.metrics[f'mid_radius_{lo}_{hi}']._after_step(
+                pred_occ[mr_mask], gt_occ[mr_mask])
+            self.metrics[f'mid_box_{lo}_{hi}']._after_step(
+                pred_occ[mb_mask], gt_occ[mb_mask])
 
         # Distance bin counts
         num_bins = len(self.dist_bins) - 1
