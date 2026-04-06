@@ -6,6 +6,7 @@ from .base_segmentor import CustomBaseSegmentor
 import torch, time
 
 from ..warp_utils.warping_layers import CuboidGlobalKDEGrid, warp, apply_unwarp
+from ..warp_utils.saliency_utils import load_vp_json, get_vp, save_imgs_with_vp
 from torchvision.utils import save_image
 import os
 
@@ -20,25 +21,30 @@ class BEVSegmentor(CustomBaseSegmentor):
         img_backbone_out_indices=[1, 2, 3],
         extra_img_backbone=None,
         # use_post_fusion=False,
-        warp_type=None,  # None: no warping, 'tpp': use CuboidGlobalKDEGrid
+        warp_type=None,
+        warp_input_shape=(864, 1600),
+        warp_output_shape=(864, 1600),
+        vp_json=None,
+        debug_mode=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
 
-
         # reorder for better visualization
         self.order = [2, 0, 1, 4, 3, 5]
-
-        # TODO: hardcode tpp with nuscene preprocessed image size for now!
         self.warp_type = warp_type
+        self.debug_mode = debug_mode
 
         if self.warp_type == 'tpp':
             self.grid_net = CuboidGlobalKDEGrid(
-                input_shape=(864, 1600),
-                output_shape=(864, 1600),
+                input_shape=warp_input_shape,
+                output_shape=warp_output_shape,
                 separable=True
             ).cuda()
             self.grid_net.requires_grad_(False)  # not learnable, not in state_dict issue
+
+        # NOTE: hardcode top_crop as 36 now! 
+        self.vp_lookup = load_vp_json(vp_json, top_crop=36) if vp_json is not None else None
 
 
         # self.fp16_enabled = False
@@ -58,6 +64,7 @@ class BEVSegmentor(CustomBaseSegmentor):
         if extra_img_backbone is not None:
             self.extra_img_backbone = build_backbone(extra_img_backbone)
 
+
     def extract_img_feat(self, imgs, **kwargs):
         """Extract features of images."""
         B = imgs.size(0)
@@ -68,26 +75,32 @@ class BEVSegmentor(CustomBaseSegmentor):
 
 
         # ★ WARP HERE
-        # TODO: hardcode dummy vp now, use real-dataset vp later!  
         if self.warp_type == 'tpp':
             
-            print(f"[WARP INPUT] imgs: {imgs.shape}")                   # (B*N, 3, 864, 1600)
-            vpts = imgs.new_tensor([[W / 2, H / 2]]).expand(B * N, -1)  # (B*N, 2)
+            if self.debug_mode:
+                print(f"[WARP INPUT] imgs: {imgs.shape}")                   # (B*N, 3, 864, 1600)
+                print(f"[DEBUG] metas keys: {kwargs['metas'].keys()}")
+
+            img_filenames = [f for batch in kwargs['metas']['img_filename'] for f in batch]  # flat list of B*N paths
+            vpts = imgs.new_tensor([get_vp(self.vp_lookup, p) for p in img_filenames])  # (B*N, 2)
             grid = self.grid_net(imgs, vpts)                            # (B*N, 864, 1600, 2)
 
             # save original images (6 cameras, 2 rows x 3 cols)
-            os.makedirs('debug/tpp', exist_ok=True)
-            save_image(imgs[self.order], 'debug/tpp/imgs_before_warp.png', nrow=3, normalize=True)
+            if self.debug_mode:
+                os.makedirs('debug/tpp', exist_ok=True)
+                save_image(imgs[self.order], 'debug/tpp/imgs_before_warp.png', nrow=3, normalize=True)
+                save_imgs_with_vp(imgs, vpts, img_filenames, 'debug/tpp/imgs_before_warp_with_vp.png', self.order)  # ← insert here
 
             imgs = warp(grid, imgs)
-            print(f"[WARP OUTPUT] imgs: {imgs.shape}")                  # (B*N, 3, 864, 1600)
-
+            
             # save warped images (6 cameras, 2 rows x 3 cols)
-            save_image(imgs[self.order], 'debug/tpp/imgs_after_warp.png', nrow=3, normalize=True)
+            if self.debug_mode:
+                print(f"[WARP OUTPUT] imgs: {imgs.shape}")                  # (B*N, 3, 864, 1600)
+                save_image(imgs[self.order], 'debug/tpp/imgs_after_warp.png', nrow=3, normalize=True)
 
-            # debug: unwarp the warped image back, should look close to original
-            imgs_unwarped = apply_unwarp(grid, imgs, separable=True)
-            save_image(imgs_unwarped[self.order], 'debug/tpp/imgs_after_unwarp.png', nrow=3, normalize=True)
+                # save warped-unwarped images (should be same as original)
+                imgs_unwarped = apply_unwarp(grid, imgs, separable=True)
+                save_image(imgs_unwarped[self.order], 'debug/tpp/imgs_after_unwarp.png', nrow=3, normalize=True)
 
 
         img_feats_backbone = self.img_backbone(imgs)
@@ -113,18 +126,20 @@ class BEVSegmentor(CustomBaseSegmentor):
             if self.warp_type == 'tpp':
 
                 # save feature before unwarp (average over channel dim → grayscale)
-                feat_before = img_feat.mean(dim=1, keepdim=True)  # (B*N, 1, H, W)
-                save_image(feat_before[self.order], f'debug/tpp/feat_before_unwarp_{H}x{W}.png', nrow=3, normalize=True)
-                
-                print(f"[UNWARP INPUT] img_feat: {img_feat.shape}")  # (B*N, C, H, W)
-                img_feat = apply_unwarp(grid, img_feat, separable=True)
-                print(f"[UNWARP OUTPUT] img_feat: {img_feat.shape}")
-                
-                # save feature after unwarp
-                feat_after = img_feat.mean(dim=1, keepdim=True)  # (B*N, 1, H, W)
-                save_image(feat_after[self.order], f'debug/tpp/feat_after_unwarp_{H}x{W}.png', nrow=3, normalize=True)
+                if self.debug_mode:
+                    feat_before = img_feat.mean(dim=1, keepdim=True)  # (B*N, 1, H, W)
+                    save_image(feat_before[self.order], f'debug/tpp/feat_before_unwarp_{H}x{W}.png', nrow=3, normalize=True)
+                    print(f"[UNWARP INPUT] img_feat: {img_feat.shape}")  # (B*N, C, H, W)
 
-                exit()
+                img_feat = apply_unwarp(grid, img_feat, separable=True)
+
+                # save feature after unwarp
+                if self.debug_mode:
+                    feat_after = img_feat.mean(dim=1, keepdim=True)  # (B*N, 1, H, W)
+                    save_image(feat_after[self.order], f'debug/tpp/feat_after_unwarp_{H}x{W}.png', nrow=3, normalize=True)
+                    print(f"[UNWARP OUTPUT] img_feat: {img_feat.shape}")
+
+                    exit()
 
 
             # if self.use_post_fusion:

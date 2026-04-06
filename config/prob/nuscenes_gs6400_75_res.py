@@ -1,7 +1,7 @@
 _base_ = ['./nuscenes_gs6400.py']
 
 # =========== data config ==============
-input_shape = (832, 448)  # NOTE: both are divisble by 32.
+input_shape = (1184, 640)  # NOTE: both are divisble by 32.
 
 # NOTE: need full {} here to avoid collapse. 
 data_aug_conf = {

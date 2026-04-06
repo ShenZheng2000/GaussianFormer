@@ -31,7 +31,8 @@ class NuScenesDataset(Dataset):
             'occ_cam_mask',
             'ori_img',
             'cam_positions',
-            'focal_positions'
+            'focal_positions',
+            'img_filename',
         ],
     ):
         self.data_path = data_root

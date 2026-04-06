@@ -131,22 +131,22 @@ class SpatialMIoUTracker:
         num_bins = len(self.dist_bins) - 1
         header = f'{"Bin (m)":>12} {"Total":>10} {"Non-empty":>10} {"% Non-empty":>12} {"% of all Non-empty":>18}'
 
-        logger.info('\n===== Non-empty voxel distribution by RADIAL distance (sqrt(x^2+y^2)) =====')
-        logger.info(header)
-        radial_sum = self.radial_nonempty.sum()
-        for b in range(num_bins):
-            pct = 100.0 * self.radial_nonempty[b] / self.radial_total[b] if self.radial_total[b] > 0 else 0
-            pct_tot = 100.0 * self.radial_nonempty[b] / radial_sum if radial_sum > 0 else 0
-            logger.info(f'{self.dist_bins[b]:>5.0f}-{self.dist_bins[b+1]:>4.0f}m '
-                        f'{self.radial_total[b]:>10d} {self.radial_nonempty[b]:>10d} '
-                        f'{pct:>11.1f}% {pct_tot:>17.1f}%')
+        # logger.info('\n===== Non-empty voxel distribution by RADIAL distance (sqrt(x^2+y^2)) =====')
+        # logger.info(header)
+        # radial_sum = self.radial_nonempty.sum()
+        # for b in range(num_bins):
+        #     pct = 100.0 * self.radial_nonempty[b] / self.radial_total[b] if self.radial_total[b] > 0 else 0
+        #     pct_tot = 100.0 * self.radial_nonempty[b] / radial_sum if radial_sum > 0 else 0
+        #     logger.info(f'{self.dist_bins[b]:>5.0f}-{self.dist_bins[b+1]:>4.0f}m '
+        #                 f'{self.radial_total[b]:>10d} {self.radial_nonempty[b]:>10d} '
+        #                 f'{pct:>11.1f}% {pct_tot:>17.1f}%')
 
-        logger.info('\n===== Non-empty voxel distribution by BOX distance (max(|x|,|y|)) =====')
-        logger.info(header)
-        box_sum = self.box_nonempty.sum()
-        for b in range(num_bins):
-            pct = 100.0 * self.box_nonempty[b] / self.box_total[b] if self.box_total[b] > 0 else 0
-            pct_tot = 100.0 * self.box_nonempty[b] / box_sum if box_sum > 0 else 0
-            logger.info(f'{self.dist_bins[b]:>5.0f}-{self.dist_bins[b+1]:>4.0f}m '
-                        f'{self.box_total[b]:>10d} {self.box_nonempty[b]:>10d} '
-                        f'{pct:>11.1f}% {pct_tot:>17.1f}%')
+        # logger.info('\n===== Non-empty voxel distribution by BOX distance (max(|x|,|y|)) =====')
+        # logger.info(header)
+        # box_sum = self.box_nonempty.sum()
+        # for b in range(num_bins):
+        #     pct = 100.0 * self.box_nonempty[b] / self.box_total[b] if self.box_total[b] > 0 else 0
+        #     pct_tot = 100.0 * self.box_nonempty[b] / box_sum if box_sum > 0 else 0
+        #     logger.info(f'{self.dist_bins[b]:>5.0f}-{self.dist_bins[b+1]:>4.0f}m '
+        #                 f'{self.box_total[b]:>10d} {self.box_nonempty[b]:>10d} '
+        #                 f'{pct:>11.1f}% {pct_tot:>17.1f}%')
