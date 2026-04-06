@@ -109,7 +109,9 @@ def main(local_rank, args):
     if cfg.resume_from and osp.exists(cfg.resume_from):
         map_location = 'cpu'
         ckpt = torch.load(cfg.resume_from, map_location=map_location)
-        raw_model.load_state_dict(ckpt.get("state_dict", ckpt), strict=True)
+        # raw_model.load_state_dict(ckpt.get("state_dict", ckpt), strict=True)
+        # NOTE: for debug only, allow missing keys due to warp module
+        raw_model.load_state_dict(ckpt.get("state_dict", ckpt), strict=False)
         print(f'successfully resumed.')
     elif cfg.load_from:
         ckpt = torch.load(cfg.load_from, map_location='cpu')
