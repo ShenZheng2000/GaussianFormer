@@ -1,3 +1,4 @@
+.nfs*
 debug/
 
 # Byte-compiled / optimized / DLL files
