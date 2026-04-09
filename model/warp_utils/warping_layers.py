@@ -351,75 +351,125 @@ def invert_grid(grid, input_shape, separable=False):
     return f(grid, list(input_shape))
 
 
-## ANURAG: This makes it fast but doesn't work on all torch versions
-# @torch.jit.script
+# ## ANURAG: This makes it fast but doesn't work on all torch versions
+# # @torch.jit.script
+# def invert_separable_grid(grid, input_shape: List[int]):
+#     grid = grid.clone()
+#     device = grid.device
+#     H: int = input_shape[2]
+#     W: int = input_shape[3]
+#     B, grid_H, grid_W, _ = grid.shape
+#     assert B == input_shape[0]
+
+#     eps = 1e-8
+#     grid[:, :, :, 0] = (grid[:, :, :, 0] + 1) / 2 * (W - 1)
+#     grid[:, :, :, 1] = (grid[:, :, :, 1] + 1) / 2 * (H - 1)
+#     # grid now ranges from 0 to ([H or W] - 1)
+#     # TODO: implement batch operations
+#     inverse_grid = 2 * max(H, W) * torch.ones(
+#         [B, H, W, 2], dtype=torch.float32, device=device)
+#     for b in range(B):
+#         # each of these is ((grid_H - 1)*(grid_W - 1)) x 2
+#         p00 = grid[b,  :-1,   :-1, :].contiguous().view(-1, 2)  # noqa: 203
+#         p10 = grid[b, 1:  ,   :-1, :].contiguous().view(-1, 2)  # noqa: 203
+#         p01 = grid[b,  :-1,  1:  , :].contiguous().view(-1, 2)  # noqa: 203
+
+#         ref = torch.floor(p00).to(torch.int)
+#         v00 = p00 - ref
+#         v10 = p10 - ref
+#         v01 = p01 - ref
+#         vx = p01[:, 0] - p00[:, 0]
+#         vy = p10[:, 1] - p00[:, 1]
+
+#         min_x = int(floor(v00[:, 0].min() - eps))
+#         max_x = int(ceil(v01[:, 0].max() + eps))
+#         min_y = int(floor(v00[:, 1].min() - eps))
+#         max_y = int(ceil(v10[:, 1].max() + eps))
+
+#         pts = torch.cartesian_prod(
+#             torch.arange(min_x, max_x + 1, device=device),
+#             torch.arange(min_y, max_y + 1, device=device),
+#         ).T  # 2 x (x_range*y_range)
+
+#         unwarped_x = (pts[0].unsqueeze(0) - v00[:, 0].unsqueeze(1)) / vx.unsqueeze(1)  # noqa: E501
+#         unwarped_y = (pts[1].unsqueeze(0) - v00[:, 1].unsqueeze(1)) / vy.unsqueeze(1)  # noqa: E501
+#         unwarped_pts = torch.stack((unwarped_y, unwarped_x), dim=0)  # noqa: E501, has shape2 x ((grid_H - 1)*(grid_W - 1)) x (x_range*y_range)
+
+#         good_indices = torch.logical_and(
+#             torch.logical_and(-eps <= unwarped_pts[0],
+#                               unwarped_pts[0] <= 1+eps),
+#             torch.logical_and(-eps <= unwarped_pts[1],
+#                               unwarped_pts[1] <= 1+eps),
+#         )  # ((grid_H - 1)*(grid_W - 1)) x (x_range*y_range)
+#         nonzero_good_indices = good_indices.nonzero()
+#         inverse_j = pts[0, nonzero_good_indices[:, 1]] + ref[nonzero_good_indices[:, 0], 0]  # noqa: E501
+#         inverse_i = pts[1, nonzero_good_indices[:, 1]] + ref[nonzero_good_indices[:, 0], 1]  # noqa: E501
+#         # TODO: is replacing this with reshape operations on good_indices faster? # noqa: E501
+#         j = nonzero_good_indices[:, 0] % (grid_W - 1)
+#         i = nonzero_good_indices[:, 0] // (grid_W - 1)
+#         grid_mappings = torch.stack(
+#             (j + unwarped_pts[1, good_indices], i + unwarped_pts[0, good_indices]),  # noqa: E501
+#             dim=1
+#         )
+#         in_bounds = torch.logical_and(
+#             torch.logical_and(0 <= inverse_i, inverse_i < H),
+#             torch.logical_and(0 <= inverse_j, inverse_j < W),
+#         )
+#         inverse_grid[b, inverse_i[in_bounds], inverse_j[in_bounds], :] = grid_mappings[in_bounds, :]  # noqa: E501
+
+#     inverse_grid[..., 0] = (inverse_grid[..., 0]) / (grid_W - 1) * 2.0 - 1.0  # noqa: E501
+#     inverse_grid[..., 1] = (inverse_grid[..., 1]) / (grid_H - 1) * 2.0 - 1.0  # noqa: E501
+#     return inverse_grid
+
+
+# NOTE: let's try this one (which is more efficient, but get same result)
 def invert_separable_grid(grid, input_shape: List[int]):
-    grid = grid.clone()
+    """Invert a separable warp grid via 1D searchsorted.
+
+    For separable grids, x-mapping depends only on column index and
+    y-mapping depends only on row index, so inversion reduces to two
+    independent 1D monotonic interpolation inversions.
+    """
     device = grid.device
+    B = input_shape[0]
     H: int = input_shape[2]
     W: int = input_shape[3]
-    B, grid_H, grid_W, _ = grid.shape
-    assert B == input_shape[0]
+    _, grid_H, grid_W, _ = grid.shape
 
-    eps = 1e-8
-    grid[:, :, :, 0] = (grid[:, :, :, 0] + 1) / 2 * (W - 1)
-    grid[:, :, :, 1] = (grid[:, :, :, 1] + 1) / 2 * (H - 1)
-    # grid now ranges from 0 to ([H or W] - 1)
-    # TODO: implement batch operations
-    inverse_grid = 2 * max(H, W) * torch.ones(
-        [B, H, W, 2], dtype=torch.float32, device=device)
-    for b in range(B):
-        # each of these is ((grid_H - 1)*(grid_W - 1)) x 2
-        p00 = grid[b,  :-1,   :-1, :].contiguous().view(-1, 2)  # noqa: 203
-        p10 = grid[b, 1:  ,   :-1, :].contiguous().view(-1, 2)  # noqa: 203
-        p01 = grid[b,  :-1,  1:  , :].contiguous().view(-1, 2)  # noqa: 203
+    # Extract 1D forward mappings (separable → row 0 for x, col 0 for y)
+    # Denormalize from [-1, 1] to pixel coordinates [0, dim-1]
+    x_fwd = ((grid[:, 0, :, 0] + 1) / 2 * (W - 1)).contiguous()   # [B, grid_W]
+    y_fwd = ((grid[:, :, 0, 1] + 1) / 2 * (H - 1)).contiguous()   # [B, grid_H]
 
-        ref = torch.floor(p00).to(torch.int)
-        v00 = p00 - ref
-        v10 = p10 - ref
-        v01 = p01 - ref
-        vx = p01[:, 0] - p00[:, 0]
-        vy = p10[:, 1] - p00[:, 1]
+    # Target pixel coordinates to invert
+    tx = torch.arange(W, device=device, dtype=grid.dtype).unsqueeze(0).expand(B, -1)  # [B, W]
+    ty = torch.arange(H, device=device, dtype=grid.dtype).unsqueeze(0).expand(B, -1)  # [B, H]
 
-        min_x = int(floor(v00[:, 0].min() - eps))
-        max_x = int(ceil(v01[:, 0].max() + eps))
-        min_y = int(floor(v00[:, 1].min() - eps))
-        max_y = int(ceil(v10[:, 1].max() + eps))
+    # --- invert x: find fractional grid column for each target pixel ---
+    ix = torch.searchsorted(x_fwd, tx).clamp(1, grid_W - 1)       # [B, W]
+    x_lo = torch.gather(x_fwd, 1, ix - 1)
+    x_hi = torch.gather(x_fwd, 1, ix)
+    frac_x = (tx - x_lo) / (x_hi - x_lo).clamp_min(1e-8)
+    inv_x = ((ix - 1 + frac_x) / (grid_W - 1)) * 2 - 1           # [B, W]
 
-        pts = torch.cartesian_prod(
-            torch.arange(min_x, max_x + 1, device=device),
-            torch.arange(min_y, max_y + 1, device=device),
-        ).T  # 2 x (x_range*y_range)
+    # --- invert y: find fractional grid row for each target pixel ---
+    iy = torch.searchsorted(y_fwd, ty).clamp(1, grid_H - 1)       # [B, H]
+    y_lo = torch.gather(y_fwd, 1, iy - 1)
+    y_hi = torch.gather(y_fwd, 1, iy)
+    frac_y = (ty - y_lo) / (y_hi - y_lo).clamp_min(1e-8)
+    inv_y = ((iy - 1 + frac_y) / (grid_H - 1)) * 2 - 1           # [B, H]
 
-        unwarped_x = (pts[0].unsqueeze(0) - v00[:, 0].unsqueeze(1)) / vx.unsqueeze(1)  # noqa: E501
-        unwarped_y = (pts[1].unsqueeze(0) - v00[:, 1].unsqueeze(1)) / vy.unsqueeze(1)  # noqa: E501
-        unwarped_pts = torch.stack((unwarped_y, unwarped_x), dim=0)  # noqa: E501, has shape2 x ((grid_H - 1)*(grid_W - 1)) x (x_range*y_range)
+    # Out-of-range → 2.0 (outside [-1,1], grid_sample returns 0)
+    inv_x[tx < x_fwd[:, :1]] = 2.0
+    inv_x[tx > x_fwd[:, -1:]] = 2.0
+    inv_y[ty < y_fwd[:, :1]] = 2.0
+    inv_y[ty > y_fwd[:, -1:]] = 2.0
 
-        good_indices = torch.logical_and(
-            torch.logical_and(-eps <= unwarped_pts[0],
-                              unwarped_pts[0] <= 1+eps),
-            torch.logical_and(-eps <= unwarped_pts[1],
-                              unwarped_pts[1] <= 1+eps),
-        )  # ((grid_H - 1)*(grid_W - 1)) x (x_range*y_range)
-        nonzero_good_indices = good_indices.nonzero()
-        inverse_j = pts[0, nonzero_good_indices[:, 1]] + ref[nonzero_good_indices[:, 0], 0]  # noqa: E501
-        inverse_i = pts[1, nonzero_good_indices[:, 1]] + ref[nonzero_good_indices[:, 0], 1]  # noqa: E501
-        # TODO: is replacing this with reshape operations on good_indices faster? # noqa: E501
-        j = nonzero_good_indices[:, 0] % (grid_W - 1)
-        i = nonzero_good_indices[:, 0] // (grid_W - 1)
-        grid_mappings = torch.stack(
-            (j + unwarped_pts[1, good_indices], i + unwarped_pts[0, good_indices]),  # noqa: E501
-            dim=1
-        )
-        in_bounds = torch.logical_and(
-            torch.logical_and(0 <= inverse_i, inverse_i < H),
-            torch.logical_and(0 <= inverse_j, inverse_j < W),
-        )
-        inverse_grid[b, inverse_i[in_bounds], inverse_j[in_bounds], :] = grid_mappings[in_bounds, :]  # noqa: E501
-
-    inverse_grid[..., 0] = (inverse_grid[..., 0]) / (grid_W - 1) * 2.0 - 1.0  # noqa: E501
-    inverse_grid[..., 1] = (inverse_grid[..., 1]) / (grid_H - 1) * 2.0 - 1.0  # noqa: E501
-    return inverse_grid
+    # Build 2D grid from separable 1D inversions
+    return torch.stack((
+        inv_x.unsqueeze(1).expand(B, H, W),
+        inv_y.unsqueeze(2).expand(B, H, W),
+    ), dim=-1)  # [B, H, W, 2]
 
 
 def invert_nonseparable_grid(grid, input_shape):
