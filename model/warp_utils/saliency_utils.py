@@ -7,14 +7,23 @@ def load_vp_json(vp_json_path, top_crop=36):
         raw = json.load(f)
     lookup = {}
     for cam, entries in raw.items():
+        # cam = "CAM_FRONT"
+        # entries = {"samples/CAM_FRONT/n015...jpg": [-1217.28, 448.51], ...}
         for rel_path, (u, v) in entries.items():
-            lookup[rel_path] = [u, v - top_crop]
+            # rel_path = "samples/CAM_FRONT/n015-2018-07-18-11-07-57+0800__CAM_FRONT__1531883530412470.jpg"
+            # u = -1217.28, v = 448.51
+            # filename = "n015-2018-07-18-11-07-57+0800__CAM_FRONT__1531883530412470.jpg"
+            filename = os.path.basename(rel_path)
+            lookup[filename] = [u, v - top_crop]
+            # lookup["n015...jpg"] = [-1217.28, 412.51]
     return lookup
 
 
 def get_vp(vp_lookup, full_path):
-    key = next(k for k in vp_lookup if k in full_path)
-    return vp_lookup[key]
+    # direct O(1) lookup using just the filename
+    # e.g. "/data/nuscenes/samples/CAM_FRONT/n015...jpg" -> "n015...jpg"
+    filename = os.path.basename(full_path)
+    return vp_lookup[filename]
 
 
 def save_imgs_with_vp(imgs, vpts, img_filenames, save_path, order):
