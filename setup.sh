@@ -1,22 +1,23 @@
-# Basic settings
-    # module load cuda-11.8
-    # pip install einops
-    # pip install jaxtyping
-    # pip install kornia
+#!/bin/bash
+# GaussianFormer Setup Reference
 
-# Download dataset in gdrive (not baidu cloud given my authors)
-    # https://drive.google.com/drive/folders/1N76ZOtLwarcVSo89xE8tDo_Boa1fh-_C
+# ── 1. ENVIRONMENT FIXES ────────────────────────────────────
+# (authors' guide missing these)
+# module load cuda-11.8
+# pip install einops jaxtyping kornia
+# pointops fix → https://github.com/huang-yh/GaussianFormer/issues/47#issuecomment-4180099966
 
-# Download init weights (init.pth)
-    # https://github.com/huang-yh/GaussianFormer/issues/46#issuecomment-2543560817
+# ── 2. WEIGHTS ──────────────────────────────────────────────
+# wget https://cloud.tsinghua.edu.cn/f/159a3370b4e843ddaec5/?dl=1
 
-# Setup pointops
-    # https://github.com/huang-yh/GaussianFormer/issues/47#issuecomment-4180099966
+# ── 3. DATASET ──────────────────────────────────────────────
+# SurroundOcc: skip Baidu, use GDrive instead
+# gdown --folder https://drive.google.com/drive/folders/1N76ZOtLwarcVSo89xE8tDo_Boa1fh-_C
 
-# Dataset symlinks settings
-    # ln -s /ssd0/shenzhen/Datasets/nuscenes /home/shenzhen/3D_Projects/GaussianFormer/data
-    # ln -s /ssd0/shenzhen/Datasets/nuscenes_cam /home/shenzhen/3D_Projects/GaussianFormer/data
-    # ln -s /ssd0/shenzhen/Datasets/surroundocc /home/shenzhen/3D_Projects/GaussianFormer/data
+# ── 4. SYMLINKS ─────────────────────────────────────────────
+# ln -s /ssd0/shenzhen/Datasets/nuscenes          /home/shenzhen/3D_Projects/GaussianFormer/data
+# ln -s /ssd0/shenzhen/Datasets/nuscenes_cam      /home/shenzhen/3D_Projects/GaussianFormer/data
+# ln -s /ssd0/shenzhen/Datasets/surroundocc       /home/shenzhen/3D_Projects/GaussianFormer/data
 
 
 

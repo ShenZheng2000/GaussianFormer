@@ -157,7 +157,9 @@ class GaussianLifterV2(BaseLifter):
             initialize_input = kwargs["imgs"].flatten(0, 1)
             if self.initializer_img_downsample is not None:
                 initialize_input = nn.functional.interpolate(
-                    initialize_input, scale_factor=self.initializer_img_downsample, 
+                    # initialize_input, scale_factor=self.initializer_img_downsample, 
+                    # NOTE: change scale_factor to size for easy management
+                    initialize_input, size=self.initializer_img_downsample, 
                     mode='bilinear', align_corners=True)
             secondfpn_out = self.initialize_backbone(initialize_input)
             secondfpn_out = secondfpn_out.unflatten(0, (b, n))
