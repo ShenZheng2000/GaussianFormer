@@ -36,6 +36,7 @@ class GaussianLifterV2(BaseLifter):
         projection_in=None,
         initializer=None,
         initializer_img_downsample=None,
+        lifter_input_mode='none',  # 'none' | 'downsample' | 'warp'
         pretrained_path=None,
         deterministic=True,
         random_samples=0,
@@ -103,6 +104,17 @@ class GaussianLifterV2(BaseLifter):
         else:
             self.initialize_backbone = None
         self.initializer_img_downsample = initializer_img_downsample
+
+        # Explicit mode for lifter input: 'none', 'downsample', or 'warp'
+        assert lifter_input_mode in ('none', 'downsample', 'warp'), \
+            f"lifter_input_mode must be 'none', 'downsample', or 'warp', got '{lifter_input_mode}'"
+        if lifter_input_mode == 'downsample':
+            assert initializer_img_downsample is not None, \
+                "lifter_input_mode='downsample' requires initializer_img_downsample to be set"
+        if lifter_input_mode == 'warp':
+            assert initializer_img_downsample is None, \
+                "lifter_input_mode='warp' is incompatible with initializer_img_downsample"
+        self.lifter_input_mode = lifter_input_mode
         
         self.pretrained_path = pretrained_path
         self.deterministic = deterministic
@@ -155,13 +167,22 @@ class GaussianLifterV2(BaseLifter):
         if self.initialize_backbone is not None:
             b, n = kwargs["imgs"].shape[:2]
             initialize_input = kwargs["imgs"].flatten(0, 1)
-            if self.initializer_img_downsample is not None:
+
+            # Lifter input mode: downsample, warp, or passthrough
+            if self.lifter_input_mode == 'downsample':
                 initialize_input = nn.functional.interpolate(
-                    # initialize_input, scale_factor=self.initializer_img_downsample, 
-                    # NOTE: change scale_factor to size for easy management
                     initialize_input, size=self.initializer_img_downsample, 
                     mode='bilinear', align_corners=True)
-            secondfpn_out = self.initialize_backbone(initialize_input)
+                secondfpn_out = self.initialize_backbone(initialize_input)
+            elif self.lifter_input_mode == 'warp':
+                warp_grid = kwargs.get("warp_grid", None)
+                assert warp_grid is not None, \
+                    "lifter_input_mode='warp' but no warp_grid found in kwargs. " \
+                    "Ensure warp_type='tpp' is set in the model config."
+                secondfpn_out = self.initialize_backbone(initialize_input, warp_grid=warp_grid)
+            else:  # 'none'
+                secondfpn_out = self.initialize_backbone(initialize_input)
+
             secondfpn_out = secondfpn_out.unflatten(0, (b, n))
         else:
             secondfpn_out = kwargs["secondfpn_out"]
