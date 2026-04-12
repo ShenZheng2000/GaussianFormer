@@ -7,5 +7,12 @@
 #     --work-dir /ssd0/shenzhen/Methods/GaussianFormer/out/nuscenes_gs6400_halfres
 
 # v2 results (#6400, REtrained half-half, +TPP)
-python train.py --py-config config/prob/nuscenes_gs6400_tpp_halfres.py \
-    --work-dir /ssd0/shenzhen/Methods/GaussianFormer/out/nuscenes_gs6400_tpp_halfres
+# python train.py --py-config config/prob/nuscenes_gs6400_tpp_halfres.py \
+#     --work-dir /ssd0/shenzhen/Methods/GaussianFormer/out/nuscenes_gs6400_tpp_halfres
+
+# v2 results (#6400, REtrained half-half, + unfreeze lifter)
+python train.py --py-config config/prob/nuscenes_gs6400_halfres_unfreeze_lifter_nosyncbn.py \
+    --work-dir /ssd0/shenzhen/Methods/GaussianFormer/out/nuscenes_gs6400_halfres_unfreeze_lifter_nosyncbn
+
+python train.py --py-config config/prob/nuscenes_gs6400_halfres_nosyncbn.py \
+    --work-dir /ssd0/shenzhen/Methods/GaussianFormer/out/nuscenes_gs6400_halfres_nosyncbn
