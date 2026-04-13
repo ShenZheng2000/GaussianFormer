@@ -36,6 +36,7 @@ class GaussianLifterV2(BaseLifter):
         projection_in=None,
         initializer=None,
         initializer_img_downsample=None,
+        lifter_input_mode=None,  # None | 'downsample' | 'warp'
         pretrained_path=None,
         deterministic=True,
         random_samples=0,
@@ -104,6 +105,14 @@ class GaussianLifterV2(BaseLifter):
             self.initialize_backbone = None
         self.initializer_img_downsample = initializer_img_downsample
         
+        # Explicit mode for lifter input: None, 'downsample', or 'warp'
+        if lifter_input_mode is None:
+            if initializer_img_downsample is not None:
+                lifter_input_mode = 'downsample'
+            else:
+                lifter_input_mode = None
+        self.lifter_input_mode = lifter_input_mode
+
         self.pretrained_path = pretrained_path
         self.deterministic = deterministic
         if pretrained_path is not None:
@@ -155,13 +164,20 @@ class GaussianLifterV2(BaseLifter):
         if self.initialize_backbone is not None:
             b, n = kwargs["imgs"].shape[:2]
             initialize_input = kwargs["imgs"].flatten(0, 1)
-            if self.initializer_img_downsample is not None:
+
+            # mutually exclusive modes — only one of these should be active at a time
+            if self.lifter_input_mode == 'downsample':
                 initialize_input = nn.functional.interpolate(
-                    # initialize_input, scale_factor=self.initializer_img_downsample, 
-                    # NOTE: change scale_factor to size for easy management
-                    initialize_input, size=self.initializer_img_downsample, 
+                    initialize_input, size=self.initializer_img_downsample,
                     mode='bilinear', align_corners=True)
-            secondfpn_out = self.initialize_backbone(initialize_input)
+                secondfpn_out = self.initialize_backbone(initialize_input)
+            elif self.lifter_input_mode == 'warp':
+                warp_grid = kwargs.get("warp_grid", None)
+                assert warp_grid is not None, "lifter_input_mode='warp' but no warp_grid in kwargs"
+                secondfpn_out = self.initialize_backbone(initialize_input, warp_grid=warp_grid)
+            else:
+                secondfpn_out = self.initialize_backbone(initialize_input)
+
             secondfpn_out = secondfpn_out.unflatten(0, (b, n))
         else:
             secondfpn_out = kwargs["secondfpn_out"]
@@ -248,6 +264,14 @@ class GaussianLifterV2(BaseLifter):
                     scanidx = farthest_point_sampling(scan, sublens, new_sublens)
                 else:
                     # breakpoint()
+
+                    # NOTE: add fps_cap to address OOM error
+                    # print("[DEBUG], applying fps_cap!)")
+                    fps_cap = self.num_anchor * 8
+                    if scan.shape[0] > fps_cap:
+                        perm = torch.randperm(scan.shape[0], device=scan.device)[:fps_cap]
+                        scan = scan[perm]
+
                     scanidx = farthest_point_sampling(
                         scan, 
                         torch.tensor([scan.shape[0]], device=scan.device, dtype=torch.int),

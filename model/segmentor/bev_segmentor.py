@@ -92,6 +92,8 @@ class BEVSegmentor(CustomBaseSegmentor):
                 save_imgs_with_vp(imgs, vpts, img_filenames, 'debug/tpp/imgs_before_warp_with_vp.png', self.order)  # ← insert here
 
             imgs = warp(grid, imgs)
+
+            result.update({"warp_grid": grid})
             
             # save warped images (6 cameras, 2 rows x 3 cols)
             if self.debug_mode:
