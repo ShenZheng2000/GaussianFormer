@@ -7,9 +7,9 @@ from mmengine import Config
 from mmengine.runner import set_random_seed
 from mmengine.logging import MMLogger
 from mmseg.models import build_segmentor
+import logging
 
 
-# TODO: use 500 for later use 100 for quick debug!
 NUM_SAMPLES = 500
 WARMUP      = 50   # first N samples discarded
 
@@ -27,9 +27,11 @@ def main(args):
     timestamp = time.strftime('%Y%m%d_%H%M%S', time.localtime())
     log_file  = osp.join(args.work_dir, f'latency_{timestamp}.log')
     # logger    = MMLogger('latency', log_file=log_file)
+
     # NOTE: STOP saving log_file for cleaner output.
-    logger    = MMLogger('latency', log_file=None)
-    MMLogger._instance_dict['latency'] = logger
+    # logger    = MMLogger('latency', log_file=None)
+    logger = MMLogger.get_instance('latency', log_file=None, log_level='WARNING')
+    # MMLogger._instance_dict['latency'] = logger
     # logger.info(f'Config:\n{cfg.pretty_text}')
 
     # build model — single GPU only
@@ -37,7 +39,12 @@ def main(args):
     from dataset import get_dataloader
 
     my_model = build_segmentor(cfg.model)
+
+    # NOTE: fix long printout of init_weights() for cleaner output.
+    logger.setLevel(logging.WARNING)
     my_model.init_weights()
+    # logger.setLevel(logging.INFO)
+
     my_model = my_model.cuda()
     my_model.eval()
     os.environ['eval'] = 'true'
@@ -72,6 +79,7 @@ def main(args):
         val_only=True)
 
     latencies = []
+    mem_usages = []   # ← add here
 
     with torch.no_grad():
         for i_iter_val, data in enumerate(val_dataset_loader):
@@ -86,25 +94,34 @@ def main(args):
 
             # --- time the forward pass ---
             torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()   # ← add here
             t0 = time.perf_counter()
 
             result_dict = my_model(imgs=input_imgs, metas=data)
 
             torch.cuda.synchronize()
             latencies.append(time.perf_counter() - t0)
+            mem_usages.append(torch.cuda.max_memory_allocated() / 1024 ** 3)   # GB
             # -----------------------------
 
             if i_iter_val % 10 == 0:
-                logger.info(f'[LATENCY] sample {i_iter_val}/{NUM_SAMPLES}')
+                print(f'[LATENCY] sample {i_iter_val}/{NUM_SAMPLES}')
 
     # discard warmup
     latencies = latencies[WARMUP:]
     avg_ms  = (sum(latencies) / len(latencies)) * 1000
     fps     = 1.0 / (sum(latencies) / len(latencies))
 
-    logger.info(f'--- Latency Results (samples={len(latencies)}, warmup={WARMUP}) ---')
-    logger.info(f'Avg latency : {avg_ms:.2f} ms')
-    logger.info(f'FPS         : {fps:.2f}')
+    mem_usages = mem_usages[WARMUP:]   # ← add here
+    avg_mem  = sum(mem_usages) / len(mem_usages)
+    peak_mem = max(mem_usages)    
+
+    print(f'--- Latency Results (samples={len(latencies)}, warmup={WARMUP}) ---')
+    print(f'Avg latency : {avg_ms:.2f} ms')
+    print(f'FPS         : {fps:.2f}')
+
+    print(f'Avg memory  : {avg_mem:.2f} GB')
+    print(f'Peak memory : {peak_mem:.2f} GB')
 
 
 if __name__ == '__main__':
