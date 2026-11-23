@@ -16,3 +16,7 @@ eval_model() {
 # eval_model   nuscenes_gs6400_tpp_halfres_unfreeze_lifter_nosyncbn           20
 # eval_model   nuscenes_gs6400_tpp_halfres_v2_unfreeze_lifter_nosyncbn        20 
 # eval_model   nuscenes_gs6400_tpp_quarterres_v2                              17
+
+# eval_model   nuscenes_gs6400_tpp_halfres_v2_unfreeze_lifter_nosyncbn_frozen_stages0   20
+
+eval_model   nuscenes_gs6400_tpp_halfres_v2_unfreeze_lifter_nosyncbn_finetune   17

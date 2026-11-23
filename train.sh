@@ -16,3 +16,8 @@ train_model() {
 # bad naming (change when train done): nuscenes_gs6400_tpp_halfres_v2_unfreeze_lifter_nosyncbn_unfreeze_stage0
 # train_model nuscenes_gs6400_tpp_halfres_v2_unfreeze_lifter_nosyncbn_frozen_stages0
 # train_model nuscenes_gs6400_tpp_halfres_v2_unfreeze_lifter_nosyncbn_frozen_stagesneg1
+
+
+# train_model nuscenes_gs6400_halfres_unfreeze_lifter_nosyncbn_finetune
+train_model nuscenes_gs6400_tpp_halfres_v2_unfreeze_lifter_nosyncbn_finetune && \
+    train_model nuscenes_gs6400_tpp_halfres_v2_unfreeze_lifter_nosyncbn_lora_finetune
