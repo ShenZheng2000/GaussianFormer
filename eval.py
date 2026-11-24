@@ -60,7 +60,7 @@ def main(local_rank, args):
     log_file = osp.join(args.work_dir, f'{timestamp}.log')
     logger = MMLogger('selfocc', log_file=log_file)
     MMLogger._instance_dict['selfocc'] = logger
-    logger.info(f'Config:\n{cfg.pretty_text}')
+    logger.info(f'Config: {args.py_config}')  # full config dump removed (too noisy)
 
     # build model
     import model
@@ -128,18 +128,34 @@ def main(local_rank, args):
         
     print_freq = cfg.print_freq
     from misc.metric_util import MeanIoU
-    miou_metric = MeanIoU(
-        list(range(1, 17)),
-        17, #17,
-        ['barrier', 'bicycle', 'bus', 'car', 'construction_vehicle',
-         'motorcycle', 'pedestrian', 'traffic_cone', 'trailer', 'truck',
-         'driveable_surface', 'other_flat', 'sidewalk', 'terrain', 'manmade',
-         'vegetation'],
-         True, 17, filter_minmax=False)
-    miou_metric.reset()
+    def make_miou():
+        m = MeanIoU(
+            list(range(1, 17)),
+            17, #17,
+            ['barrier', 'bicycle', 'bus', 'car', 'construction_vehicle',
+             'motorcycle', 'pedestrian', 'traffic_cone', 'trailer', 'truck',
+             'driveable_surface', 'other_flat', 'sidewalk', 'terrain', 'manmade',
+             'vegetation'],
+             True, 17, filter_minmax=False)
+        m.reset()
+        m.quiet = True  # eval.py prints per-class once below
+        return m
+    miou_metric = make_miou()
+
+    # also track night / day in the same pass (scene list: misc/make_night_day_list.py)
+    import json
+    with open(osp.join(osp.dirname(osp.abspath(__file__)), 'misc/val_night_day.json')) as f:
+        night_tokens = set(json.load(f)['night'])
+    ds = val_dataset_loader.dataset
+    tag_of = {}  # CAM_FRONT image basename -> 'night' | 'day'
+    for tok, fi in ds.keyframes:
+        fn = osp.basename(ds.scene_infos[tok][fi]['data']['CAM_FRONT']['filename'])
+        tag_of[fn] = 'night' if tok in night_tokens else 'day'
+    group_metrics = {'night': make_miou(), 'day': make_miou()}
+    group_count = torch.zeros(2).cuda()  # [night, day] samples seen
 
     # >>>>>>>>>> SPATIAL MIOU — INIT (comment out to disable) <<<<<<<<<<
-    spatial_tracker = SpatialMIoUTracker()
+    spatial_tracker = SpatialMIoUTracker() if args.spatial else None
     # >>>>>>>>>> SPATIAL MIOU — END INIT <<<<<<<<<<
 
     my_model.eval()
@@ -151,6 +167,7 @@ def main(local_rank, args):
             for k in list(data.keys()):
                 if isinstance(data[k], torch.Tensor):
                     data[k] = data[k].cuda()
+            fnames = [osp.basename(b[0]) for b in data['img_filename']]
             input_imgs = data.pop('img')
             result_dict = my_model(imgs=input_imgs, metas=data)
             if 'final_occ' in result_dict:
@@ -171,20 +188,42 @@ def main(local_rank, args):
                     #         f'val_{i_iter_val}_gt',
                     #         True, 0)
                     miou_metric._after_step(pred_occ, gt_occ, occ_mask)
+                    tag = tag_of[fnames[idx]]
+                    group_metrics[tag]._after_step(pred_occ, gt_occ, occ_mask)
+                    group_count[0 if tag == 'night' else 1] += 1
                     # breakpoint()
                     # >>>>>>>>>> SPATIAL MIOU — PER-SAMPLE (comment out to disable) <<<<<<<<<<
-                    spatial_tracker.update(pred_occ, gt_occ, result_dict['sampled_xyz'][idx], occ_mask)
+                    if spatial_tracker is not None: spatial_tracker.update(pred_occ, gt_occ, result_dict['sampled_xyz'][idx], occ_mask)
                     # >>>>>>>>>> SPATIAL MIOU — END PER-SAMPLE <<<<<<<<<<
             
             if i_iter_val % print_freq == 0 and local_rank == 0:
                 logger.info('[EVAL] Iter %5d'%(i_iter_val))
                     
+    def report(title, metric, miou, iou2, n=None):
+        if local_rank != 0:
+            return
+        logger.info(f'===== {title}' + (f' ({n} samples)' if n is not None else '') + ' =====')
+        for name, iou, prec, reca, seen in metric.per_class:
+            note = '' if seen > 0 else '  (no GT voxels, counted as 100)'
+            logger.info(f'{name:<22s} IoU {iou * 100:6.2f}  prec {prec:.2f}  rec {float(reca):.2f}{note}')
+        gt = [p[1] for p in metric.per_class if p[4] > 0]
+        logger.info(f'mIoU (GT classes only): {100 * sum(gt) / len(gt):.2f} ({len(gt)}/{len(metric.per_class)} classes)')
+        logger.info(f'mIoU: {miou}, iou2: {iou2}')
+
+    if dist.is_initialized():
+        dist.all_reduce(group_count)
+    # _after_epoch all-reduces: every rank must call it, in the same order
     miou, iou2 = miou_metric._after_epoch()
-    logger.info(f'mIoU: {miou}, iou2: {iou2}')
+    report('all', miou_metric, miou, iou2)
     miou_metric.reset()
+    for tag in ('night', 'day'):
+        m = group_metrics[tag]
+        mi, io = m._after_epoch()
+        report(tag, m, mi, io, int(group_count[0 if tag == 'night' else 1].item()))
+        m.reset()
 
     # >>>>>>>>>> SPATIAL MIOU — REPORTING (comment out to disable) <<<<<<<<<<
-    spatial_tracker.report(logger)
+    if spatial_tracker is not None: spatial_tracker.report(logger)
     # >>>>>>>>>> SPATIAL MIOU — END REPORTING <<<<<<<<<<
     
     if writer is not None:
@@ -199,6 +238,8 @@ if __name__ == '__main__':
     parser.add_argument('--resume-from', type=str, default='')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--vis-occ', action='store_true', default=False)
+    parser.add_argument('--spatial', action='store_true', default=False,
+                        help='also report near/mid/far spatial mIoU (off by default)')
     args = parser.parse_args()
     
     ngpus = torch.cuda.device_count()

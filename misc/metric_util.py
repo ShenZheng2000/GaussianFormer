@@ -95,13 +95,18 @@ class MeanIoU:
 
         miou = np.mean(ious)
         # logger = get_root_logger()
-        logger.info(f'Validation per class iou {self.name}:')
-        for iou, prec, reca, label_str in zip(ious, precs, recas, self.label_str):
-            logger.info('%s : %.2f%%, %.2f, %.2f' % (label_str, iou * 100, prec, reca))
-        
-        logger.info(self.total_seen.int())
-        logger.info(self.total_correct.int())
-        logger.info(self.total_positive.int())
+        # per-class results, kept for callers (eval.py prints them once)
+        self.per_class = [
+            (label_str, float(iou), float(prec), float(reca), int(self.total_seen[i].item()))
+            for i, (iou, prec, reca, label_str) in enumerate(zip(ious, precs, recas, self.label_str))]
+        if not getattr(self, 'quiet', False):
+            logger.info(f'Validation per class iou {self.name}:')
+            for iou, prec, reca, label_str in zip(ious, precs, recas, self.label_str):
+                logger.info('%s : %.2f%%, %.2f, %.2f' % (label_str, iou * 100, prec, reca))
+
+            logger.info(self.total_seen.int())
+            logger.info(self.total_correct.int())
+            logger.info(self.total_positive.int())
 
         occ_iou = self.total_correct[-1] / (self.total_seen[-1]
                                             + self.total_positive[-1]
